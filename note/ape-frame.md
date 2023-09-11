@@ -399,15 +399,21 @@ public class PageRequest {
 
 ### 集成mapstruct
 
-beansUtils.copyProperties效率比较低 
+beansUtils.copyProperties效率比较低 ，所以我们引入mapStruct
+
+创建convert，定义一个接口
 
 ```java
 //Mapper属于org.mapstruct
 @Mapper
 public interface SysUserConverter {
     SysUserConverter INSTANCE = Mappers.getMapper(SysUserConverter.class);
+    //如果属性名不一样的情况可以使用Mapping注解来进行字段映射
+    @Mapping(source="age", target="age1")
     SysUser convertReqToSysUser(SysUserReq sysUserReq);
 }
+//使用,将req对象映射到user对象 	 
+SysUser  sysUser = SysUserConverter。INSTANCE.convertReqToSysUser(sysUserReq);
 
 ```
 
@@ -465,4 +471,190 @@ int i = 1/0;
 处理后
 
 ![image-20230908115045001](ape-frame.assets/image-20230908115045001.png)
+
+## 集成Swagger模块
+
+swagger具有代码侵入性，小公司会使用
+
+优化：通过配置文件的形式来对Swagger进行定制。
+
+
+
+```java
+@Configuration
+//swagger开关
+@EnableSwagger2
+public class SwaggerConfig {
+//自动注入
+    @Autowired
+    private SwaggerInfo swaggerInfo;
+
+    @Bean
+    public Docket createRestApi() {
+        return new Docket(DocumentationType.SWAGGER_2)
+                .apiInfo(apiInfo())
+                .select()
+                .apis(RequestHandlerSelectors.basePackage(swaggerInfo.getBasePackage()))
+                .paths(PathSelectors.any())
+                .build();
+    }
+
+    public ApiInfo apiInfo() {
+        return new ApiInfoBuilder()
+                .title(swaggerInfo.getTitle())
+                .contact(new Contact(swaggerInfo.getContactName(),
+                        swaggerInfo.getContactUrl(),
+                        swaggerInfo.getEmail()))
+                .version(swaggerInfo.getVersion())
+                .description(swaggerInfo.getDescription())
+                .build();
+    }
+
+}
+```
+
+```java
+package com.jingdianjichi.swagger.bean;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+//通过配置的方式填充属性
+@ConfigurationProperties(prefix = "swagger")
+public class SwaggerInfo {
+
+    private String basePackage;
+
+    private String title;
+
+    private String contactName;
+
+    private String contactUrl;
+
+    private String email;
+
+    private String version;
+
+    private String description;
+
+    public String getContactUrl() {
+        return contactUrl;
+    }
+
+    public void setContactUrl(String contactUrl) {
+        this.contactUrl = contactUrl;
+    }
+
+    public String getBasePackage() {
+        return basePackage;
+    }
+
+    public void setBasePackage(String basePackage) {
+        this.basePackage = basePackage;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public String getContactName() {
+        return contactName;
+    }
+
+    public void setContactName(String contactName) {
+        this.contactName = contactName;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getVersion() {
+        return version;
+    }
+
+    public void setVersion(String version) {
+        this.version = version;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+}
+
+```
+
+## 集成redis
+
+新增配置：
+
+```xml
+spring:
+ redis:
+    host: 117.78.51.210
+    port: 6379
+    database: 0
+#配置连接池
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 8
+        max-wait: -1
+        min-idle: 0
+    password: jingdianjichi
+```
+
+配置redis序列化器以及RedisTemplate
+
+```java
+@Configuration
+public class RedisConfig {
+
+    //RedisTemplate
+    @Bean
+    public RedisTemplate<String,Object> redisTemplate(RedisConnectionFactory redisConnectionFactory){
+        RedisTemplate<String,Object> redisTemplate = new RedisTemplate<>();
+        RedisSerializer<String> redisSerializer = new StringRedisSerializer();
+        redisTemplate.setConnectionFactory(redisConnectionFactory);
+        redisTemplate.setKeySerializer(redisSerializer);
+        redisTemplate.setHashKeySerializer(redisSerializer);
+        redisTemplate.setValueSerializer(jackson2JsonRedisSerializer());
+        redisTemplate.setHashValueSerializer(jackson2JsonRedisSerializer());
+        return redisTemplate;
+    }
+
+    @Bean
+    public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory){
+        RedisCacheWriter redisCacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(redisConnectionFactory);
+        RedisSerializationContext.SerializationPair<Object> pair = RedisSerializationContext.SerializationPair.fromSerializer(jackson2JsonRedisSerializer());
+        RedisCacheConfiguration defaultCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .serializeValuesWith(pair).entryTtl(Duration.ofSeconds(10));
+        return new RedisCacheManager(redisCacheWriter,defaultCacheConfig);
+    }
+//设置序列化器
+    private Jackson2JsonRedisSerializer<Object> jackson2JsonRedisSerializer(){
+        Jackson2JsonRedisSerializer<Object> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(Object.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,false);
+        objectMapper.enableDefaultTyping(ObjectMapper.DefaultTyping.NON_FINAL, JsonTypeInfo.As.PROPERTY);
+        jsonRedisSerializer.setObjectMapper(objectMapper);
+        return jsonRedisSerializer;
+    }
+
+}
+```
 

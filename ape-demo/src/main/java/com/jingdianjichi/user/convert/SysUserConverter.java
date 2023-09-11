@@ -9,7 +9,7 @@ import org.mapstruct.factory.Mappers;
 @Mapper
 public interface SysUserConverter {
 
-    SysUserConverter INSTANCE = Mappers.getMapper(SysUserConverter.class);
+    SysUserConverter INSTANCE = Mappers. getMapper(SysUserConverter.class);
 
     SysUser convertReqToSysUser(SysUserReq sysUserReq);
 
