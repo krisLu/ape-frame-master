@@ -1,0 +1,62 @@
+spring:
+  datasource:
+    username: root
+    password: jingdianjichi123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://117.78.51.210:3306/ape-frame?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf8&useSSL=false
+    type: com.alibaba.druid.pool.DruidDataSource
+    druid:
+      initial-size: 20
+      min-idle: 20
+      max-active: 100
+      max-wait: 60000
+      stat-view-servlet:
+        enabled: true
+        url-pattern: /druid/*
+        login-username: admin
+        login-password: 123456
+      filter:
+        stat:
+          enabled: true
+          log-slow-sql: true
+          slow-sql-millis: 2000
+        wall:
+          enabled: true
+  redis:
+    host: 117.78.51.210
+    port: 6379
+    database: 0
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 8
+        max-wait: -1
+        min-idle: 0
+    password: jingdianjichi
+sql:
+  beauty:
+    show: false
+mybatis-plus:
+  global-config:
+    db-config:
+      logic-delete-field: delete_flag
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+    banner: false
+  mapper-locations: classpath:mapper/*.xml
+swagger:
+  base-package: com.jingdianjichi
+  title: ape-frame
+  contact-name: 经典鸡翅
+  contact-url: 地址
+  email: jichi@163.com
+  version: 1.0
+  description: 从0到1 开箱即用脚手架
+logging:
+  config: classpath:log4j2-spring.xml
+log:
+  aspect:
+    enable: true
+guava:
+  cache:
+    switch: true
