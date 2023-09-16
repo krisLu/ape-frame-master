@@ -27,12 +27,14 @@ public class LogAspect {
 
     @Around("pointCut()")
     public Object around(ProceedingJoinPoint pjp) throws Throwable {
+
         Object[] reqArgs = pjp.getArgs();
         String req = new Gson().toJson(reqArgs);
         MethodSignature methodSignature = (MethodSignature) pjp.getSignature();
         String methodName = methodSignature.getDeclaringType().getName() + "." + methodSignature.getName();
         log.info("{},req:{}", methodName, req);
         Long startTime = System.currentTimeMillis();
+        //执行方法，接收返回参数
         Object responseObj = pjp.proceed();
         String resp = new Gson().toJson(responseObj);
         Long endTime = System.currentTimeMillis();

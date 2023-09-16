@@ -94,6 +94,8 @@
 <!--            <AppenderRef ref="RollingFileInfo" />-->
 <!--        </AsyncRoot>-->
 
+
+
         <root level="info">
             <appender-ref ref="Console"/>
             <appender-ref ref="RollingFileInfo"/>

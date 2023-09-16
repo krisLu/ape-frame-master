@@ -21,7 +21,7 @@
         </dependency>
         <dependency>
             <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
+            <artifactId>ptor</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>

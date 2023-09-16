@@ -636,15 +636,7 @@ public class RedisConfig {
         return redisTemplate;
     }
 
-    @Bean
-    public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory){
-        RedisCacheWriter redisCacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(redisConnectionFactory);
-        RedisSerializationContext.SerializationPair<Object> pair = RedisSerializationContext.SerializationPair.fromSerializer(jackson2JsonRedisSerializer());
-        RedisCacheConfiguration defaultCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
-                .serializeValuesWith(pair).entryTtl(Duration.ofSeconds(10));
-        return new RedisCacheManager(redisCacheWriter,defaultCacheConfig);
-    }
-//设置序列化器
+   //设置序列化器
     private Jackson2JsonRedisSerializer<Object> jackson2JsonRedisSerializer(){
         Jackson2JsonRedisSerializer<Object> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(Object.class);
         ObjectMapper objectMapper = new ObjectMapper();
@@ -656,5 +648,340 @@ public class RedisConfig {
     }
 
 }
+```
+
+### 封装分布式锁
+
+ 参数校验可以使用common-logging包的StringUtils进行参数判断
+
+```java
+package com.jingdianjichi.redis.util;
+
+import com.jingdianjichi.redis.exception.ShareLockException;
+import org.apache.commons.lang.StringUtils;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.Resource;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * @Author: ChickenWing
+ * @Description: Redis分布式锁
+ * @DateTime: 2022/9/24 22:28
+ */
+@Component
+public class RedisShareLockUtil {
+
+    @Resource
+    private RedisUtil redisUtil;
+
+    private Long TIME_OUT = 1000L;
+
+    /**
+     * @Author: ChickenWing
+     * @Description: 加锁
+     * @DateTime: 2022/9/24 21:25
+     */
+    //参数:localKey表示分布式锁的key，requestId作为value作为识别当前锁是不是之前添加的
+    public boolean lock(String lockKey, String requestId, Long time) {
+        //参数校验
+        if (StringUtils.isBlank(lockKey) || StringUtils.isBlank(requestId) || time <= 0) {
+            throw new ShareLockException("分布式锁-加锁参数异常");
+        }
+        long currentTime = System.currentTimeMillis();
+        long outTime = currentTime + TIME_OUT;
+        Boolean result = false;
+        //加锁自旋
+        while (currentTime < outTime) {
+            //借助redis的setnx进行实现分布式锁
+            result = redisUtil.setNx(lockKey, requestId, time, TimeUnit.MILLISECONDS);
+            if (result) {
+                return result;
+            }
+            //休息后继续自旋
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            currentTime = System.currentTimeMillis();
+        }
+        return result;
+    }
+
+    /**
+     * @Author: ChickenWing
+     * @Description:解锁
+     * @DateTime: 2022/9/24 21:25
+     */
+    public boolean unLock(String key, String requestId) {
+        if (StringUtils.isBlank(key) || StringUtils.isBlank(requestId)) {
+            throw new ShareLockException("分布式锁-解锁-参数异常");
+        }
+        try {
+            //解锁关键：判断value是否和之前的requestID一致，不一致不能解锁
+            String value = redisUtil.get(key);
+            if (requestId.equals(value)) {
+                redisUtil.del(key);
+                return true;
+            }
+        } catch (Exception e) {
+            //补日志
+        }
+        return false;
+    }
+
+    /**
+     * @Author: ChickenWing
+     * @Description: 尝试加锁
+     * @DateTime: 2022/9/24 21:26
+     */
+    public boolean tryLock(String lockKey, String requestId, Long time) {
+        if (StringUtils.isBlank(lockKey) || StringUtils.isBlank(requestId) || time <= 0) {
+            throw new ShareLockException("分布式锁-尝试加锁参数异常");
+        }
+        //尝试一次，不可以就返回false
+        return redisUtil.setNx(lockKey, requestId, time, TimeUnit.MILLISECONDS);
+    }
+
+}
+
+```
+
+**场景**
+
+1.任务调度
+
+2.计算金额
+
+操作同一个数据
+
+### 注解缓存
+
+```java
+			 @Bean
+    public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory){
+        RedisCacheWriter redisCacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(redisConnectionFactory);
+        RedisSerializationContext.SerializationPair<Object> pair = RedisSerializationContext.SerializationPair.fromSerializer(jackson2JsonRedisSerializer());
+        RedisCacheConfiguration defaultCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .serializeValuesWith(pair).entryTtl(Duration.ofSeconds(10));
+        return new RedisCacheManager(redisCacheWriter,defaultCacheConfig);
+    }
+
+```
+
+@Cacheable注解缺点，所有的key都需要在Duration.ofSeconds(10)统一设置使用此注解的所有key的超时时间。这就导致所有的key的过期时间都相同
+
+### 分布式锁业务场景
+
+1.任务调度
+
+2.计算金额，线程安全
+
+## 集成Log模块
+
+### 异步日志log4j
+
+指定日志文件路径
+
+```yml
+logging:
+	config:classpath:logging.xml
+```
+
+resource目录下logging.xml
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Configuration后面的status，这个用于设置log4j2自身内部的信息输出，可以不设置，当设置成trace时，你会看到log4j2内部各种详细输出-->
+<!--monitorInterval：Log4j能够自动检测修改配置 文件和重新配置本身，设置间隔秒数-->
+<configuration status="INFO" monitorInterval="5">
+    <!--日志级别以及优先级排序: OFF > FATAL > ERROR > WARN > INFO > DEBUG > TRACE > ALL -->
+    <!--变量配置-->
+    <Properties>
+        <!-- 格式化输出：%date表示日期，%thread表示线程名，%-5level：级别从左显示5个字符宽度 %msg：日志消息，%n是换行符-->
+        <!-- %logger{36} 表示 Logger 名字最长36个字符 -->
+        <property name="LOG_PATTERN" value="%date{HH:mm:ss.SSS} %X{PFTID} [%thread] %-5level %logger{36} - %msg%n" />
+        <!-- 定义日志存储的路径 -->
+        <property name="FILE_PATH" value="../log" />
+        <property name="FILE_NAME" value="frame.log" />
+    </Properties>
+
+    <!--https://logging.apache.org/log4j/2.x/manual/appenders.html-->
+    <appenders>
+
+        <console name="Console" target="SYSTEM_OUT">
+            <!--输出日志的格式-->
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <!--控制台只输出level及其以上级别的信息（onMatch），其他的直接拒绝（onMismatch）-->
+            <ThresholdFilter level="info" onMatch="ACCEPT" onMismatch="DENY"/>
+        </console>
+
+        <!--文件会打印出所有信息，这个log每次运行程序会自动清空，由append属性决定，适合临时测试用-->
+        <File name="fileLog" fileName="${FILE_PATH}/temp.log" append="false">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+        </File>
+
+        <!-- 这个会打印出所有的info及以下级别的信息，每次大小超过size，则这size大小的日志会自动存入按年份-月份建立的文件夹下面并进行压缩，作为存档-->
+        <RollingFile name="RollingFileInfo" fileName="${FILE_PATH}/info.log" filePattern="${FILE_PATH}/${FILE_NAME}-INFO-%d{yyyy-MM-dd}_%i.log.gz">
+            <!--控制台只输出level及以上级别的信息（onMatch），其他的直接拒绝（onMismatch）-->
+            <ThresholdFilter level="info" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <!--interval属性用来指定多久滚动一次，默认是1 hour-->
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+            <!-- DefaultRolloverStrategy属性如不设置，则默认为最多同一文件夹下7个文件开始覆盖-->
+            <DefaultRolloverStrategy max="15"/>
+        </RollingFile>
+
+        <!-- 这个会打印出所有的warn及以下级别的信息，每次大小超过size，则这size大小的日志会自动存入按年份-月份建立的文件夹下面并进行压缩，作为存档-->
+        <RollingFile name="RollingFileWarn" fileName="${FILE_PATH}/warn.log" filePattern="${FILE_PATH}/${FILE_NAME}-WARN-%d{yyyy-MM-dd}_%i.log.gz">
+            <!--控制台只输出level及以上级别的信息（onMatch），其他的直接拒绝（onMismatch）-->
+            <ThresholdFilter level="warn" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <!--interval属性用来指定多久滚动一次，默认是1 hour-->
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+            <!-- DefaultRolloverStrategy属性如不设置，则默认为最多同一文件夹下7个文件开始覆盖-->
+            <DefaultRolloverStrategy max="15"/>
+        </RollingFile>
+
+        <!-- 这个会打印出所有的error及以下级别的信息，每次大小超过size，则这size大小的日志会自动存入按年份-月份建立的文件夹下面并进行压缩，作为存档-->
+        <RollingFile name="RollingFileError" fileName="${FILE_PATH}/error.log" filePattern="${FILE_PATH}/${FILE_NAME}-ERROR-%d{yyyy-MM-dd}_%i.log.gz">
+            <!--控制台只输出level及以上级别的信息（onMatch），其他的直接拒绝（onMismatch）-->
+            <ThresholdFilter level="error" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <!--interval属性用来指定多久滚动一次，默认是1 hour-->
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+            <!-- DefaultRolloverStrategy属性如不设置，则默认为最多同一文件夹下7个文件开始覆盖-->
+            <DefaultRolloverStrategy max="15"/>
+        </RollingFile>
+
+    </appenders>
+
+    <!--Logger节点用来单独指定日志的形式，比如要为指定包下的class指定不同的日志级别等。-->
+    <!--然后定义loggers，只有定义了logger并引入的appender，appender才会生效-->
+    <loggers>
+
+        <!--过滤掉spring和mybatis的一些无用的DEBUG信息-->
+<!--        <logger name="org.mybatis" level="info" additivity="false">-->
+<!--            <AppenderRef ref="Console"/>-->
+<!--        </logger>-->
+        <!--监控系统信息-->
+        <!--若是additivity设为false，则子Logger只会在自己的appender里输出，而不会在父Logger的appender里输出。-->
+<!--        <Logger name="org.springframework" level="info" additivity="false">-->
+<!--            <AppenderRef ref="Console"/>-->
+<!--        </Logger>-->
+
+<!--        <AsyncLogger name="asyncLog" level="info" additivity="true">-->
+<!--            <appender-ref ref="RollingFileInfo"/>-->
+<!--        </AsyncLogger>-->
+
+<!--        <AsyncRoot level="info" includeLocation="true">-->
+<!--            <AppenderRef ref="RollingFileInfo" />-->
+<!--        </AsyncRoot>-->
+
+        <root level="info">
+            <appender-ref ref="Console"/>
+            <appender-ref ref="RollingFileInfo"/>
+            <appender-ref ref="RollingFileWarn"/>
+            <appender-ref ref="RollingFileError"/>
+            <appender-ref ref="fileLog"/>
+        </root>
+    </loggers>
+
+</configuration>
+```
+
+引入异步日志
+
+```xml
+  <dependency>
+                <groupId>com.lmax</groupId>
+                <artifactId>disruptor</artifactId>
+                <version>${disruptor.version}</version>
+            </dependency>
+```
+
+修改xml文件
+
+```xml
+  <!--  过滤掉spring和mybatis的一些无用的DEBUG信息 -->
+                <logger name="org.mybatis" level="info" additivity="false">
+                    <AppenderRef ref="Console"/>
+                </logger>
+         <!--  监控系统信息-->
+       <!--    若是additivity设为false，则子Logger只会在自己的appender里输出，而不会在父Logger的appender里输出。-->
+                <Logger name="org.springframework" level="info" additivity="false">
+                    <AppenderRef ref="Console"/>
+                </Logger>
+
+                <AsyncLogger name="asyncLog" level="info" additivity="true">
+                    <appender-ref ref="RollingFileInfo"/>
+                </AsyncLogger>
+
+                <AsyncRoot level="info" includeLocation="true">
+                    <AppenderRef ref="RollingFileInfo" />
+                </AsyncRoot>
+  <!--注解掉root-->
+```
+
+修改启动类
+
+```java
+ public static void main(String[] args) {
+        System.setProperty("Log4jContextSelector", "org.apache.logging.log4j.core.async.AsyncLoggerContextSelector");
+        SpringApplication.run(DemoApplication.class);
+    }
+```
+
+异步日志结果：2456- >89
+
+### 使用Gson和AOP打印入参出参
+
+配合traceId可以实现全链路打印
+
+```java
+@Aspect
+@Slf4j
+@Component
+/**
+配置开关
+**/
+@ConditionalOnProperty(name = {"log.aspect.enable"}, havingValue = "true", matchIfMissing = true)
+public class LogAspect {
+
+    @Pointcut("execution(* com.jingdianjichi.*.controller.*Controller.*(..)) || execution(* com.jingdianjichi.*.service.*Service.*(..))")
+    private void pointCut() {
+    }
+
+    @Around("pointCut()")
+    public Object around(ProceedingJoinPoint pjp) throws Throwable {
+        
+        Object[] reqArgs = pjp.getArgs();
+        String req = new Gson().toJson(reqArgs);
+        //获取方法相关的信息
+        MethodSignature methodSignature = (MethodSignature) pjp.getSignature();
+        //获取方法名
+        String methodName = methodSignature.getDeclaringType().getName() + "." + methodSignature.getName();
+        log.info("{},req:{}", methodName, req);
+        Long startTime = System.currentTimeMillis();
+        //执行方法，接收返回参数
+        Object responseObj = pjp.proceed();
+        String resp = new Gson().toJson(responseObj);
+        Long endTime = System.currentTimeMillis();
+        log.info("{},response:{},costTime:{}", methodName, resp, endTime - startTime);
+        return responseObj;
+    }
+
+}
+
 ```
 
