@@ -1,4 +1,4 @@
-## mybatis-plus模块
+## 集成mybatis-plus模块
 
 ### po，dto区别
 
@@ -421,7 +421,7 @@ SysUser  sysUser = SysUserConverter。INSTANCE.convertReqToSysUser(sysUserReq);
 
 
 
-## web模块
+## 集成web模块
 
 ### 全局异常处理
 
@@ -778,6 +778,80 @@ public class RedisShareLockUtil {
 
 2.计算金额，线程安全
 
+### Guava本地缓存
+
+当redis在高并发情况下qps非常高的时候，会达到一定瓶颈，使用本地缓存作为二级缓存可以有效的redis的压力
+
+#### CacheUtil本地缓存工具类
+
+```java
+
+@Component
+@Slf4j
+public class GuavaCacheUtil<K, V> {
+
+    @Resource
+    public RedisUtil redisUtil;
+
+    @Value("${guava.cache.switch}")
+    public Boolean switchCache;
+
+    //初始化本地缓存
+    private Cache<String, String> localCache =
+            CacheBuilder.newBuilder()
+                    .maximumSize(5000)
+                    .expireAfterWrite(3, TimeUnit.SECONDS)
+                    .build();
+
+    public Map<K, V> getResult(List<K> idList, String cacheKeyPrefix, String cacheSuffix, Class<V> clazz,
+                               Function<List<K>, Map<K, V>> function) {
+        if (CollectionUtils.isEmpty(idList)) {
+            return Collections.emptyMap();
+        }
+        Map<K, V> resultMap = new HashMap<>(16);
+        
+        if (!switchCache) {
+            resultMap = function.apply(idList);
+            return resultMap;
+        }
+        List<K> noCacheIdList = new LinkedList<>();
+        //遍历，没在本地缓存中的ID
+        for (K id : idList) {
+            String cacheKey = cacheKeyPrefix + "_" + id + "_" + cacheSuffix;
+            String content = localCache.getIfPresent(cacheKey);
+            if (StringUtils.isNotBlank(content)) {
+                V v = JSON.parseObject(content, clazz);
+                resultMap.put(id, v);
+            } else {
+                noCacheIdList.add(id);
+            }
+        }
+        if (CollectionUtils.isEmpty(noCacheIdList)) {
+            return resultMap;
+        }
+        //执行rpc方法
+        Map<K, V> noCacheResultMap = function.apply(noCacheIdList);
+        if (noCacheResultMap == null || noCacheResultMap.isEmpty()) {
+            return resultMap;
+        }
+        //生成结果集，并加到本地缓存中。
+        for (Map.Entry<K, V> entry : noCacheResultMap.entrySet()) {
+            K id = entry.getKey();
+            V result = entry.getValue();
+            resultMap.put(id, result);
+            String cacheKey = cacheKeyPrefix + "_" + id + "_" + cacheSuffix;
+            localCache.put(cacheKey, JSON.toJSONString(result));
+        }
+        return resultMap;
+    }
+
+
+}
+
+```
+
+
+
 ## 集成Log模块
 
 ### 异步日志log4j
@@ -984,4 +1058,222 @@ public class LogAspect {
 }
 
 ```
+
+
+
+## 集成WebSocket
+
+导入spring-boot-starter-websocket
+
+添加webSocket配置类
+
+```java
+@Configuration
+public class WebSocketConfig {
+
+    @Bean
+    public ServerEndpointExporter serverEndpointExporter() {
+        return new ServerEndpointExporter();
+    }
+
+}
+```
+
+```java
+@Component
+public class WebSocketServerConfig extends ServerEndpointConfig.Configurator {
+
+    @Override
+    public boolean checkOrigin(String originHeaderValue) {
+        ServletRequestAttributes servletRequestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        HttpServletRequest request = servletRequestAttributes.getRequest();
+        return true;
+    }
+
+    @Override
+    public void modifyHandshake(ServerEndpointConfig sec, HandshakeRequest request, HandshakeResponse response) {
+        Map<String, List<String>> parameterMap = request.getParameterMap();
+        List<String> erpList = parameterMap.getOrDefault("erp", null);
+        if (!CollectionUtils.isEmpty(erpList)) {
+            sec.getUserProperties().put("erp", erpList.get(0));
+        }
+    }
+
+}
+```
+
+WebSocket要保证操作的原子性，所以使用AutomicInt
+
+```java
+@Slf4j
+@ServerEndpoint(value = "/chicken/socket", configurator = WebSocketServerConfig.class)
+@Component
+public class ChickenSocket {
+
+    /**
+     * 记录当前在线连接数
+     */
+    private static AtomicInteger onlineCount = new AtomicInteger(0);
+
+    /**
+     * 存放所有在线的客户端
+     */
+    private static Map<String, ChickenSocket> clients = new ConcurrentHashMap<>();
+
+    /**
+     * 与某个客户端的连接会话，需要通过它来给客户端发送数据
+     */
+    private Session session;
+
+    /**
+     * erp唯一标识
+     */
+    private String erp = "";
+
+    /**
+     * 连接建立成功调用的方法
+     */
+    @OnOpen
+    public void onOpen(Session session, EndpointConfig conf) throws IOException {
+        //获取用户信息
+        try {
+            Map<String, Object> userProperties = conf.getUserProperties();
+            String erp = (String) userProperties.get("erp");
+            this.erp = erp;
+            this.session = session;
+            //如果电脑端已连接，现在在手机端再次连接，需要进行判断，如果存在，则将电脑端移除。
+            if (clients.containsKey(this.erp)) {
+                clients.get(this.erp).session.close();
+                clients.remove(this.erp);
+                onlineCount.decrementAndGet();
+            }
+            //移除后将手机端的erp放入
+            clients.put(this.erp, this);
+            onlineCount.incrementAndGet();
+            log.info("有新连接加入：{}，当前在线人数为：{}", erp, onlineCount.get());
+            sendMessage("连接成功", this.session);
+        } catch (Exception e) {
+            log.error("建立链接错误{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 连接关闭调用的方法
+     */
+    @OnClose
+    public void onClose() {
+        try {
+            if (clients.containsKey(erp)) {
+                clients.get(erp).session.close();
+                clients.remove(erp);
+                onlineCount.decrementAndGet();
+            }
+            log.info("有一连接关闭：{}，当前在线人数为：{}", this.erp, onlineCount.get());
+        } catch (Exception e) {
+            log.error("连接关闭错误，错误原因{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 收到客户端消息后调用的方法
+     */
+    @OnMessage
+    public void onMessage(String message, Session session) {
+        log.info("服务端收到客户端[{}]的消息:{}", this.erp, message);
+        //心跳机制
+        if (message.equals("ping")) {
+            this.sendMessage("pong", session);
+        }
+    }
+
+    @OnError
+    public void onError(Session session, Throwable error) {
+        log.error("Socket:{},发生错误,错误原因{}", erp, error.getMessage(), error);
+        try {
+            session.close();
+        } catch (Exception e) {
+            log.error("onError.Exception{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 指定发送消息
+     */
+    public void sendMessage(String message, Session session) {
+        log.info("服务端给客户端[{}]发送消息{}", this.erp, message);
+        try {
+            session.getBasicRemote().sendText(message);
+        } catch (IOException e) {
+            log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
+        }
+    }
+
+    /**
+     * 群发消息
+     */
+    public void sendMessage(String message) {
+        for (Map.Entry<String, ChickenSocket> sessionEntry : clients.entrySet()) {
+            String erp = sessionEntry.getKey();
+            ChickenSocket socket = sessionEntry.getValue();
+            Session session = socket.session;
+            log.info("服务端给客户端[{}]发送消息{}", erp, message);
+            try {
+                session.getBasicRemote().sendText(message);
+            } catch (IOException e) {
+                log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
+            }
+        }
+    }
+
+}
+```
+
+## 服务预热
+
+服务预热，当服务全部启动后，会优先启动这些服务。
+
+```java
+@Component
+@Slf4j
+public class ApplicationInit implements ApplicationListener<ApplicationReadyEvent> {
+
+    Map<String, InitFunction> initFunctionMap = new HashMap<>();
+//最先通过代码块，将需要预热的服务放到map中
+    {
+        initFunctionMap.put("预热fastjson", this::initFastJson);
+    }
+//监听事件，通过遍历map进行执行function函数。
+    @Override
+    public void onApplicationEvent(ApplicationReadyEvent applicationReadyEvent) {
+        initFunctionMap.forEach((desc, function) -> {
+            try {
+                long start = System.currentTimeMillis();
+                function.invoke();
+                log.info("ApplicationInit{}.costTime{}", desc, System.currentTimeMillis() - start);
+            } catch (Exception e) {
+                log.error("ApplicationInit{}.error", desc, e);
+            }
+        });
+    }
+//预热服务的函数
+    private void initFastJson() {
+        SkuDO skuDO = new SkuDO();
+        skuDO.setSkuId(1L);
+        skuDO.setSkuName("苹果");
+        String s = JSON.toJSONString(skuDO);
+        System.out.println(s);
+        JSON.parseObject(s, SkuDO.class);
+    }
+//函数接口
+    interface InitFunction {
+        void invoke();
+    }
+
+}
+
+```
+
+fastJson预热所需要的时间是243ms，如果在高峰流量过来的时候，可以为你节省243ms的时间，是不是非常划算
+
+## 时间转化器
 

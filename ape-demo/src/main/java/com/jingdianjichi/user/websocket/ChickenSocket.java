@@ -47,11 +47,13 @@ public class ChickenSocket {
             String erp = (String) userProperties.get("erp");
             this.erp = erp;
             this.session = session;
+            //如果电脑端已连接，现在在手机端再次连接，需要进行判断，如果存在，则将电脑端移除。
             if (clients.containsKey(this.erp)) {
                 clients.get(this.erp).session.close();
                 clients.remove(this.erp);
                 onlineCount.decrementAndGet();
             }
+            //移除后将手机端的erp放入
             clients.put(this.erp, this);
             onlineCount.incrementAndGet();
             log.info("有新连接加入：{}，当前在线人数为：{}", erp, onlineCount.get());

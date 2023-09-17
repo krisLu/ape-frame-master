@@ -46,11 +46,13 @@ public class GuavaCacheUtil<K, V> {
             return Collections.emptyMap();
         }
         Map<K, V> resultMap = new HashMap<>(16);
+
         if (!switchCache) {
             resultMap = function.apply(idList);
             return resultMap;
         }
         List<K> noCacheIdList = new LinkedList<>();
+        //遍历，没在本地缓存中的ID
         for (K id : idList) {
             String cacheKey = cacheKeyPrefix + "_" + id + "_" + cacheSuffix;
             String content = localCache.getIfPresent(cacheKey);
@@ -64,10 +66,12 @@ public class GuavaCacheUtil<K, V> {
         if (CollectionUtils.isEmpty(noCacheIdList)) {
             return resultMap;
         }
+        //执行rpc方法
         Map<K, V> noCacheResultMap = function.apply(noCacheIdList);
         if (noCacheResultMap == null || noCacheResultMap.isEmpty()) {
             return resultMap;
         }
+        //生成结果集，并加到本地缓存中。
         for (Map.Entry<K, V> entry : noCacheResultMap.entrySet()) {
             K id = entry.getKey();
             V result = entry.getValue();
