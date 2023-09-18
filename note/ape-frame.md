@@ -1755,5 +1755,242 @@ spring:
 
 ## 异步线程池封装
 
-目的： 
+目的： 异步执行task的时候，我可以进行异步执行，当执行结果阻塞可以返回默认值，且不形象其他的线程执行结果
+
+```java
+/**
+ * 异步future工具类封装
+ *
+ * @author: ChickenWing
+ * @date: 2023/1/15
+ */
+public class CompletableFutureUtils {
+
+    /**
+     * 获取future返回结果
+     */
+    public static <T> T getResult(Future<T> future, long timeout, TimeUnit timeUnit, T defaultValue, Logger logger) {
+        //超时返回默认结果
+        try {
+            return future.get(timeout, timeUnit);
+        } catch (Exception e) {
+            logger.error("CompletableFutureUtils.getResult.error:{},defaultValue:{}", e.getMessage(), e);
+            logger.error("CompletableFutureUtils.getResult.error.returnDefaultValue:{}", defaultValue);
+            return defaultValue;
+        }
+    }
+
+}
+
+```
+
+测试类：
+
+```java
+ @Test
+    public void testFuture() {
+        List<FutureTask<String>> futureTaskList = new LinkedList<>();
+        FutureTask futureTask1 = new FutureTask<String>(() -> {
+            return "鸡翅";
+        });
+        FutureTask futureTask2 = new FutureTask<String>(() -> {
+            Thread.sleep(2000);
+            return "经典";
+        });
+        futureTaskList.add(futureTask1);
+        futureTaskList.add(futureTask2);
+        mailThreadPool.submit(futureTask1);
+        mailThreadPool.submit(futureTask2);
+
+        for (int i = 0; i < futureTaskList.size(); i++) {
+            String name = CompletableFutureUtils.getResult(futureTaskList.get(i),
+                    1, TimeUnit.SECONDS, "经典鸡翅", log);
+            log.info("MailThreadPoolTest.name:{}",name);
+        }
+
+    }
+```
+
+## Event事件驱动
+
+使用观察者默认，以及事件驱动的思想去监听
+
+```java
+@Data
+public class Person{
+    private Integer age;
+    private String name;
+}
+```
+
+创建事件
+
+```java
+@Data
+@Getter
+public class PersonChangeEvent implement ApplicationEvent{
+    
+    private Person person;
+    
+    private String operateType;
+    
+    PersonChangeEvent(Person  preson , String operateType ){
+        super(person);
+        this.person = person;
+        this.operateType = operateType;
+    }
+}
+```
+
+事件创建完成，如何发布？？
+
+```java
+@Service
+@Slf4j
+public class PersonEventService{
+	
+    @Resource
+    private ApplicationEventPublisher applicationEventPublisher;
+    
+    public void createEvent(Person person){
+        applicationEventPublisher.pushlishEvent(PersonChangeEvent(person,"create"));
+    }
+    
+}
+```
+
+事件监听（观察者）
+
+```java
+@Service
+@Slf4j
+public class PersonEventListener {
+
+    //全局事务处理器
+    @TransactionalEventListener(fallbackExecution = true)
+    public void listenSecKillCreateEvent(PersonChangeEvent event) {
+        switch (event.getOperateType()) {
+            case "create":
+                log.info("执行创建相关事件,person：{}", JSON.toJSONString(event.getPerson()));
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+```
+
+测试
+
+```java
+    @Test
+    public void test() {
+        Person person = new Person();
+        person.setName("经典鸡翅");
+        person.setAge(18);
+        personEventService.creatPerson(person);
+    }
+```
+
+总结：实现解耦，类似mq，如果需要类似功能且没必要去增加一个中间件的负担，可以使用事件驱动方式去实现推送监听的方式
+
+## Redis实现延迟队列
+
+功能：定时群发任务
+
+定义群发任务
+
+```java
+@Data
+public class MassMailTask {
+
+    private Long taskId;
+
+    private Date startTime;
+
+}
+```
+
+延时发送
+
+```java
+**
+ * @Author: ChickenWing
+ * @Description: 群发任务延时service
+ * @DateTime: 2023/1/8 23:24
+ */
+@Service
+@Slf4j
+public class MassMailTaskService {
+
+    @Resource
+    private RedisUtil redisUtil;
+
+    private static final String MASS_MAIL_TASK_KEY = "massMailTask";
+
+    public void pushMassMailTaskQueue(MassMailTask massMailTask) {
+        Date startTime = massMailTask.getStartTime();
+        if (startTime == null) {
+            return;
+        }
+        if (startTime.compareTo(new Date()) <= 0) {
+            return;
+        }
+        log.info("定时群发任务加入延时队列，massMailTask:{}", JSON.toJSON(massMailTask));
+        redisUtil.zAdd(MASS_MAIL_TASK_KEY, massMailTask.getTaskId().toString(), startTime.getTime());
+    }
+
+    public Set<Long> poolMassMailTaskQueue() {
+        Set<String> taskIdSet = redisUtil.rangeByScore(MASS_MAIL_TASK_KEY, 0, System.currentTimeMillis());
+        log.info("获取延迟群发任务，taskIdSet：{}", JSON.toJSON(taskIdSet));
+        if (CollectionUtils.isEmpty(taskIdSet)) {
+            return Collections.emptySet();
+        }
+        redisUtil.removeZsetList(MASS_MAIL_TASK_KEY, taskIdSet);
+        return taskIdSet.stream().map(n -> Long.parseLong(n)).collect(Collectors.toSet());
+    }
+
+
+}
+```
+
+测试
+
+```java
+
+    @Test
+    public void push() throws Exception {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        MassMailTask massMailTask = new MassMailTask();
+        massMailTask.setTaskId(1L);
+        massMailTask.setStartTime(simpleDateFormat.parse("2023-01-08 23:59:00"));
+        massMailTaskService.pushMassMailTaskQueue(massMailTask);
+    }
+
+    @Test
+    public void deal() throws Exception {
+        String lockKey = "test.delay.task";
+        String requestId = UUID.randomUUID().toString();
+        try {
+            boolean locked = redisShareLockUtil.lock(lockKey, requestId, 5L);
+            if (!locked) {
+                return;
+            }
+            Set<Long> taskIdSet = massMailTaskService.poolMassMailTaskQueue();
+            log.info("DelayTaskTest.deal.taskIdSet:{}", JSON.toJSON(taskIdSet));
+            if (CollectionUtils.isEmpty(taskIdSet)) {
+                return;
+            }
+            //执行其他的业务逻辑
+        } catch (Exception e) {
+            log.error("延时任务拉取执行失败", e);
+        } finally {
+            redisShareLockUtil.unLock(lockKey, requestId);
+        }
+    }
+
+```
+
+总结：实现效果：定时任务发布后，在时间没有到达之前拉取任务列表都无法拉取到，只有到达任务时间才能拉取到任务id
 
