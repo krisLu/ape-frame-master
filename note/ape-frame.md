@@ -1996,4 +1996,4 @@ public class MassMailTaskService {
 
   ssss
 
-ss	
+ss	ss
