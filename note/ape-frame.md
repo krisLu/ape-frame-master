@@ -850,6 +850,153 @@ public class GuavaCacheUtil<K, V> {
 
 ```
 
+### Redis实现延迟队列
+
+功能：定时群发任务
+
+定义群发任务
+
+```java
+@Data
+public class MassMailTask {
+
+    private Long taskId;
+
+    private Date startTime;
+
+}
+```
+
+延时发送
+
+```java
+**
+ * @Author: ChickenWing
+ * @Description: 群发任务延时service
+ * @DateTime: 2023/1/8 23:24
+ */
+@Service
+@Slf4j
+public class MassMailTaskService {
+
+    @Resource
+    private RedisUtil redisUtil;
+
+    private static final String MASS_MAIL_TASK_KEY = "massMailTask";
+
+    public void pushMassMailTaskQueue(MassMailTask massMailTask) {
+        Date startTime = massMailTask.getStartTime();
+        if (startTime == null) {
+            return;
+        }
+        if (startTime.compareTo(new Date()) <= 0) {
+            return;
+        }
+        log.info("定时群发任务加入延时队列，massMailTask:{}", JSON.toJSON(massMailTask));
+        redisUtil.zAdd(MASS_MAIL_TASK_KEY, massMailTask.getTaskId().toString(), startTime.getTime());
+    }
+
+    public Set<Long> poolMassMailTaskQueue() {
+        Set<String> taskIdSet = redisUtil.rangeByScore(MASS_MAIL_TASK_KEY, 0, System.currentTimeMillis());
+        log.info("获取延迟群发任务，taskIdSet：{}", JSON.toJSON(taskIdSet));
+        if (CollectionUtils.isEmpty(taskIdSet)) {
+            return Collections.emptySet();
+        }
+        redisUtil.removeZsetList(MASS_MAIL_TASK_KEY, taskIdSet);
+        return taskIdSet.stream().map(n -> Long.parseLong(n)).collect(Collectors.toSet());
+    }
+
+
+}
+```
+
+测试
+
+```java
+    @Test
+    public void push() throws Exception {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        MassMailTask massMailTask = new MassMailTask();
+        massMailTask.setTaskId(1L);
+        massMailTask.setStartTime(simpleDateFormat.parse("2023-01-08 23:59:00"));
+        massMailTaskService.pushMassMailTaskQueue(massMailTask);
+    }
+
+    @Test
+    public void deal() throws Exception {
+        String lockKey = "test.delay.task";
+        String requestId = UUID.randomUUID().toString();
+        try {
+            boolean locked = redisShareLockUtil.lock(lockKey, requestId, 5L);
+            if (!locked) {
+                return;
+            }
+            Set<Long> taskIdSet = massMailTaskService.poolMassMailTaskQueue();
+            log.info("DelayTaskTest.deal.taskIdSet:{}", JSON.toJSON(taskIdSet));
+            if (CollectionUtils.isEmpty(taskIdSet)) {
+                return;
+            }
+            //执行其他的业务逻辑
+        } catch (Exception e) {
+            log.error("延时任务拉取执行失败", e);
+        } finally {
+            redisShareLockUtil.unLock(lockKey, requestId);
+        }
+    }
+
+```
+
+总结：实现效果：定时任务发布后，在时间没有到达之前拉取任务列表都无法拉取到，只有到达任务时间才能拉取到任务id
+
+### Redis配合lua脚本实现cas
+
+lua脚本:compareAndSet.lua
+
+```lua
+local key = KEYS[1]
+local oldValue = ARGV[1]
+local newValue = ARGV[2]
+
+local redisValue = redis.call('get', key)
+if (redisValue == false or tonumber(redisValue) == tonumber(oldValue))
+then
+    redis.call('set', key, newValue)
+    return true
+else
+    return false
+end
+```
+
+初始化lua脚本
+
+```java
+@Component
+@Slf4j
+public class RedisUtil {
+
+ 
+    private DefaultRedisScript<Boolean> casScript;
+
+    @PostConstruct
+    public void init() {
+        casScript = new DefaultRedisScript<>();
+        casScript.setResultType(Boolean.class);
+        casScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("compareAndSet.lua")));
+        System.out.println(JSON.toJSON(casScript));
+    }
+    //cas方法
+    public Boolean compareAndSet(String key, Long oldValue, Long newValue) {
+        List<String> keys = new ArrayList();
+        keys.add(key);
+        return (Boolean) redisTemplate.execute(casScript, keys, oldValue, newValue);
+    }
+}
+```
+
+
+
+
+
 
 
 ## 集成Log模块
@@ -1895,101 +2042,3 @@ public class PersonEventListener {
 
 总结：实现解耦，类似mq，如果需要类似功能且没必要去增加一个中间件的负担，可以使用事件驱动方式去实现推送监听的方式
 
-## Redis实现延迟队列
-
-功能：定时群发任务
-
-定义群发任务
-
-```java
-@Data
-public class MassMailTask {
-
-    private Long taskId;
-
-    private Date startTime;
-
-}
-```
-
-延时发送
-
-```java
-**
- * @Author: ChickenWing
- * @Description: 群发任务延时service
- * @DateTime: 2023/1/8 23:24
- */
-@Service
-@Slf4j
-public class MassMailTaskService {
-
-    @Resource
-    private RedisUtil redisUtil;
-
-    private static final String MASS_MAIL_TASK_KEY = "massMailTask";
-
-    public void pushMassMailTaskQueue(MassMailTask massMailTask) {
-        Date startTime = massMailTask.getStartTime();
-        if (startTime == null) {
-            return;
-        }
-        if (startTime.compareTo(new Date()) <= 0) {
-            return;
-        }
-        log.info("定时群发任务加入延时队列，massMailTask:{}", JSON.toJSON(massMailTask));
-        redisUtil.zAdd(MASS_MAIL_TASK_KEY, massMailTask.getTaskId().toString(), startTime.getTime());
-    }
-
-    public Set<Long> poolMassMailTaskQueue() {
-        Set<String> taskIdSet = redisUtil.rangeByScore(MASS_MAIL_TASK_KEY, 0, System.currentTimeMillis());
-        log.info("获取延迟群发任务，taskIdSet：{}", JSON.toJSON(taskIdSet));
-        if (CollectionUtils.isEmpty(taskIdSet)) {
-            return Collections.emptySet();
-        }
-        redisUtil.removeZsetList(MASS_MAIL_TASK_KEY, taskIdSet);
-        return taskIdSet.stream().map(n -> Long.parseLong(n)).collect(Collectors.toSet());
-    }
-
-
-}
-```
-
-测试
-
-```java
-
-    @Test
-    public void push() throws Exception {
-        SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        MassMailTask massMailTask = new MassMailTask();
-        massMailTask.setTaskId(1L);
-        massMailTask.setStartTime(simpleDateFormat.parse("2023-01-08 23:59:00"));
-        massMailTaskService.pushMassMailTaskQueue(massMailTask);
-    }
-
-    @Test
-    public void deal() throws Exception {
-        String lockKey = "test.delay.task";
-        String requestId = UUID.randomUUID().toString();
-        try {
-            boolean locked = redisShareLockUtil.lock(lockKey, requestId, 5L);
-            if (!locked) {
-                return;
-            }
-            Set<Long> taskIdSet = massMailTaskService.poolMassMailTaskQueue();
-            log.info("DelayTaskTest.deal.taskIdSet:{}", JSON.toJSON(taskIdSet));
-            if (CollectionUtils.isEmpty(taskIdSet)) {
-                return;
-            }
-            //执行其他的业务逻辑
-        } catch (Exception e) {
-            log.error("延时任务拉取执行失败", e);
-        } finally {
-            redisShareLockUtil.unLock(lockKey, requestId);
-        }
-    }
-
-```
-
-总结：实现效果：定时任务发布后，在时间没有到达之前拉取任务列表都无法拉取到，只有到达任务时间才能拉取到任务id
