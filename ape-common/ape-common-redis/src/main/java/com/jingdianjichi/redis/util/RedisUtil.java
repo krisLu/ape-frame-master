@@ -49,7 +49,7 @@ public class RedisUtil {
     }
 
     /**
-     * 构建缓存key
+     * 构建 缓存key
      */
     public String buildKey(String... strObjs) {
         return Stream.of(strObjs).collect(Collectors.joining(CACHE_KEY_SEPARATOR));
