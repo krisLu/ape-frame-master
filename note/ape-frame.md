@@ -974,9 +974,10 @@ end
 @Slf4j
 public class RedisUtil {
 
- 
+ //创建DefaultRedisScript脚本，并初始化
     private DefaultRedisScript<Boolean> casScript;
 
+    //使用init的时候，需要使用postContrstruct加载脚本
     @PostConstruct
     public void init() {
         casScript = new DefaultRedisScript<>();
@@ -2042,3 +2043,4 @@ public class PersonEventListener {
 
 总结：实现解耦，类似mq，如果需要类似功能且没必要去增加一个中间件的负担，可以使用事件驱动方式去实现推送监听的方式
 
+## 手写链路追踪
