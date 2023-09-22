@@ -46,7 +46,7 @@ public class ThreadPoolShutDownTest {
             executorService.execute(new TaskShutDownPool());
         }
         Thread.sleep(1000);
-        log.info("ThreadPoolShutDownTest.testTerminated.status:{}", executorService.isTerminated() + ",调用 shutdown() 方法之前");
+        log.info("ThreadPoolShutDownTest.testTerminated.status:{}", executorService.isTerminated() + ",调用 shutdown() cc方法之前");
         executorService.shutdown();
         log.info("ThreadPoolShutDownTest.testTerminated.status:{}", executorService.isTerminated() + ",调用 shutdown() 方法之后");
         Thread.sleep(500);
