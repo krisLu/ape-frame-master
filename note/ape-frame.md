@@ -1,4 +1,4 @@
-## 集成mybatis-plus模块
+# 集成Mybatis-plus模块
 
 ### po，dto区别
 
@@ -421,7 +421,7 @@ SysUser  sysUser = SysUserConverter。INSTANCE.convertReqToSysUser(sysUserReq);
 
 
 
-## 集成web模块
+# 集成Web模块
 
 ### 全局异常处理
 
@@ -471,6 +471,175 @@ int i = 1/0;
 处理后
 
 ![image-20230908115045001](ape-frame.assets/image-20230908115045001.png)
+
+## 集成WebSocket
+
+导入spring-boot-starter-websocket
+
+添加webSocket配置类
+
+```java
+@Configuration
+public class WebSocketConfig {
+
+    @Bean
+    public ServerEndpointExporter serverEndpointExporter() {
+        return new ServerEndpointExporter();
+    }
+
+}
+```
+
+```java
+@Component
+public class WebSocketServerConfig extends ServerEndpointConfig.Configurator {
+
+    @Override
+    public boolean checkOrigin(String originHeaderValue) {
+        ServletRequestAttributes servletRequestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        HttpServletRequest request = servletRequestAttributes.getRequest();
+        return true;
+    }
+
+    @Override
+    public void modifyHandshake(ServerEndpointConfig sec, HandshakeRequest request, HandshakeResponse response) {
+        Map<String, List<String>> parameterMap = request.getParameterMap();
+        List<String> erpList = parameterMap.getOrDefault("erp", null);
+        if (!CollectionUtils.isEmpty(erpList)) {
+            sec.getUserProperties().put("erp", erpList.get(0));
+        }
+    }
+
+}
+```
+
+WebSocket要保证操作的原子性，所以使用AutomicInt
+
+```java
+@Slf4j
+@ServerEndpoint(value = "/chicken/socket", configurator = WebSocketServerConfig.class)
+@Component
+public class ChickenSocket {
+
+    /**
+     * 记录当前在线连接数
+     */
+    private static AtomicInteger onlineCount = new AtomicInteger(0);
+
+    /**
+     * 存放所有在线的客户端
+     */
+    private static Map<String, ChickenSocket> clients = new ConcurrentHashMap<>();
+
+    /**
+     * 与某个客户端的连接会话，需要通过它来给客户端发送数据
+     */
+    private Session session;
+
+    /**
+     * erp唯一标识
+     */
+    private String erp = "";
+
+    /**
+     * 连接建立成功调用的方法
+     */
+    @OnOpen
+    public void onOpen(Session session, EndpointConfig conf) throws IOException {
+        //获取用户信息
+        try {
+            Map<String, Object> userProperties = conf.getUserProperties();
+            String erp = (String) userProperties.get("erp");
+            this.erp = erp;
+            this.session = session;
+            //如果电脑端已连接，现在在手机端再次连接，需要进行判断，如果存在，则将电脑端移除。
+            if (clients.containsKey(this.erp)) {
+                clients.get(this.erp).session.close();
+                clients.remove(this.erp);
+                onlineCount.decrementAndGet();
+            }
+            //移除后将手机端的erp放入
+            clients.put(this.erp, this);
+            onlineCount.incrementAndGet();
+            log.info("有新连接加入：{}，当前在线人数为：{}", erp, onlineCount.get());
+            sendMessage("连接成功", this.session);
+        } catch (Exception e) {
+            log.error("建立链接错误{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 连接关闭调用的方法
+     */
+    @OnClose
+    public void onClose() {
+        try {
+            if (clients.containsKey(erp)) {
+                clients.get(erp).session.close();
+                clients.remove(erp);
+                onlineCount.decrementAndGet();
+            }
+            log.info("有一连接关闭：{}，当前在线人数为：{}", this.erp, onlineCount.get());
+        } catch (Exception e) {
+            log.error("连接关闭错误，错误原因{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 收到客户端消息后调用的方法
+     */
+    @OnMessage
+    public void onMessage(String message, Session session) {
+        log.info("服务端收到客户端[{}]的消息:{}", this.erp, message);
+        //心跳机制
+        if (message.equals("ping")) {
+            this.sendMessage("pong", session);
+        }
+    }
+
+    @OnError
+    public void onError(Session session, Throwable error) {
+        log.error("Socket:{},发生错误,错误原因{}", erp, error.getMessage(), error);
+        try {
+            session.close();
+        } catch (Exception e) {
+            log.error("onError.Exception{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 指定发送消息
+     */
+    public void sendMessage(String message, Session session) {
+        log.info("服务端给客户端[{}]发送消息{}", this.erp, message);
+        try {
+            session.getBasicRemote().sendText(message);
+        } catch (IOException e) {
+            log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
+        }
+    }
+
+    /**
+     * 群发消息
+     */
+    public void sendMessage(String message) {
+        for (Map.Entry<String, ChickenSocket> sessionEntry : clients.entrySet()) {
+            String erp = sessionEntry.getKey();
+            ChickenSocket socket = sessionEntry.getValue();
+            Session session = socket.session;
+            log.info("服务端给客户端[{}]发送消息{}", erp, message);
+            try {
+                session.getBasicRemote().sendText(message);
+            } catch (IOException e) {
+                log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
+            }
+        }
+    }
+
+}
+```
+
+
 
 ## 集成Swagger模块
 
@@ -597,7 +766,7 @@ public class SwaggerInfo {
 
 ```
 
-## 集成redis
+# 集成Redis
 
 新增配置：
 
@@ -1000,7 +1169,7 @@ public class RedisUtil {
 
 
 
-## 集成Log模块
+# 集成Log模块
 
 ### 异步日志log4j
 
@@ -1209,172 +1378,7 @@ public class LogAspect {
 
 
 
-## 集成WebSocket
-
-导入spring-boot-starter-websocket
-
-添加webSocket配置类
-
-```java
-@Configuration
-public class WebSocketConfig {
-
-    @Bean
-    public ServerEndpointExporter serverEndpointExporter() {
-        return new ServerEndpointExporter();
-    }
-
-}
-```
-
-```java
-@Component
-public class WebSocketServerConfig extends ServerEndpointConfig.Configurator {
-
-    @Override
-    public boolean checkOrigin(String originHeaderValue) {
-        ServletRequestAttributes servletRequestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        HttpServletRequest request = servletRequestAttributes.getRequest();
-        return true;
-    }
-
-    @Override
-    public void modifyHandshake(ServerEndpointConfig sec, HandshakeRequest request, HandshakeResponse response) {
-        Map<String, List<String>> parameterMap = request.getParameterMap();
-        List<String> erpList = parameterMap.getOrDefault("erp", null);
-        if (!CollectionUtils.isEmpty(erpList)) {
-            sec.getUserProperties().put("erp", erpList.get(0));
-        }
-    }
-
-}
-```
-
-WebSocket要保证操作的原子性，所以使用AutomicInt
-
-```java
-@Slf4j
-@ServerEndpoint(value = "/chicken/socket", configurator = WebSocketServerConfig.class)
-@Component
-public class ChickenSocket {
-
-    /**
-     * 记录当前在线连接数
-     */
-    private static AtomicInteger onlineCount = new AtomicInteger(0);
-
-    /**
-     * 存放所有在线的客户端
-     */
-    private static Map<String, ChickenSocket> clients = new ConcurrentHashMap<>();
-
-    /**
-     * 与某个客户端的连接会话，需要通过它来给客户端发送数据
-     */
-    private Session session;
-
-    /**
-     * erp唯一标识
-     */
-    private String erp = "";
-
-    /**
-     * 连接建立成功调用的方法
-     */
-    @OnOpen
-    public void onOpen(Session session, EndpointConfig conf) throws IOException {
-        //获取用户信息
-        try {
-            Map<String, Object> userProperties = conf.getUserProperties();
-            String erp = (String) userProperties.get("erp");
-            this.erp = erp;
-            this.session = session;
-            //如果电脑端已连接，现在在手机端再次连接，需要进行判断，如果存在，则将电脑端移除。
-            if (clients.containsKey(this.erp)) {
-                clients.get(this.erp).session.close();
-                clients.remove(this.erp);
-                onlineCount.decrementAndGet();
-            }
-            //移除后将手机端的erp放入
-            clients.put(this.erp, this);
-            onlineCount.incrementAndGet();
-            log.info("有新连接加入：{}，当前在线人数为：{}", erp, onlineCount.get());
-            sendMessage("连接成功", this.session);
-        } catch (Exception e) {
-            log.error("建立链接错误{}", e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 连接关闭调用的方法
-     */
-    @OnClose
-    public void onClose() {
-        try {
-            if (clients.containsKey(erp)) {
-                clients.get(erp).session.close();
-                clients.remove(erp);
-                onlineCount.decrementAndGet();
-            }
-            log.info("有一连接关闭：{}，当前在线人数为：{}", this.erp, onlineCount.get());
-        } catch (Exception e) {
-            log.error("连接关闭错误，错误原因{}", e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 收到客户端消息后调用的方法
-     */
-    @OnMessage
-    public void onMessage(String message, Session session) {
-        log.info("服务端收到客户端[{}]的消息:{}", this.erp, message);
-        //心跳机制
-        if (message.equals("ping")) {
-            this.sendMessage("pong", session);
-        }
-    }
-
-    @OnError
-    public void onError(Session session, Throwable error) {
-        log.error("Socket:{},发生错误,错误原因{}", erp, error.getMessage(), error);
-        try {
-            session.close();
-        } catch (Exception e) {
-            log.error("onError.Exception{}", e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 指定发送消息
-     */
-    public void sendMessage(String message, Session session) {
-        log.info("服务端给客户端[{}]发送消息{}", this.erp, message);
-        try {
-            session.getBasicRemote().sendText(message);
-        } catch (IOException e) {
-            log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
-        }
-    }
-
-    /**
-     * 群发消息
-     */
-    public void sendMessage(String message) {
-        for (Map.Entry<String, ChickenSocket> sessionEntry : clients.entrySet()) {
-            String erp = sessionEntry.getKey();
-            ChickenSocket socket = sessionEntry.getValue();
-            Session session = socket.session;
-            log.info("服务端给客户端[{}]发送消息{}", erp, message);
-            try {
-                session.getBasicRemote().sendText(message);
-            } catch (IOException e) {
-                log.error("{}发送消息发生异常，异常原因{}", this.erp, message);
-            }
-        }
-    }
-
-}
-```
+# 集成tools模块
 
 ## 服务预热
 
@@ -1810,153 +1814,12 @@ public class SampleXxlJob {
 
 ```
 
-## 自定义线程池
-
-场景：由于业务线的线程池很多，每次都需要一个threadpool。所以需要对特定的线程池定制化
-
-```java
- @Configuration
-public class ThreadPollConfig{
-    @Bean(name="mailThreadPool")
-    public ThreadExectorPool getMailThreadPool(){
-        //如果不传入线程工厂，底层就会使用默认的线程工厂
-        return new ThreadExectorPool(20, 50, 10,
-                                     TimeUnit.SECONDS, new LinkedBlockLingQueue<>(), 
-                                     new ThreadPoolExecutor.CallerRunsPolicy())
-    }
-}
-```
-
-测试使用自定义线程
-
-```java
-@Resource(name= "mailThreadPool")
-private ThreadExectorPool mailThreadPool;
-@Test
-void test(){
-       for (int i = 0; i < 10; i++) {
-            mailThreadPool.submit(new Runnable() {
-                @Override
-                public void run() {
-                    log.info("当前时间:" + System.currentTimeMillis());
-                }
-            });
-        }
-   
-}
-```
-
-问题：打印日志无法辨识是哪一个线程池所产生的，没有辨识度。所以需要引入自定义线程工厂
-
-### 自定义线程工厂
-
-```java
-
-public class MailThreadFactory implement ThreadFactiory(){
-
-    //多线程环境保证变量的原子性，使用AtomicInteger
-    private final AtomicInteger poolNumber = new AtomicInteger(1);
-
-    private final ThreadGroup threadGroup;
-
-    private final AtomicInteger threadNumber = new AtomicInteger(1);
-
-    public final String namePrefix;
-
-    CustomNameThreadFactory(String name) {
-        SecurityManager s = System.getSecurityManager();
-        threadGroup = (s != null) ? s.getThreadGroup() :
-                Thread.currentThread().getThreadGroup();
-        if (null == name || "".equals(name.trim())) {
-            name = "pool";
-        }
-        //自定义逻辑，拼接线程name
-        namePrefix = name + "-" +
-                poolNumber.getAndIncrement() +
-                "-thread-";
-    }
-
-    @Override
-    public Thread newThread(Runnable r) {
-        Thread t = new Thread(threadGroup, r,
-                namePrefix + threadNumber.getAndIncrement(),
-                0);
-        //判断是否守护线程
-        if (t.isDaemon())
-            t.setDaemon(false);
-        //优先级	
-        if (t.getPriority() != Thread.NORM_PRIORITY)
-            t.setPriority(Thread.NORM_PRIORITY);
-        return t;
-    }
-
-}
-```
-
 ## SpringMVC静态页面访问
 
 ```yml
 spring:
 	mvc:
 		static-path-pattern:/static/**
-```
-
-## 异步线程池封装
-
-目的： 异步执行task的时候，我可以进行异步执行，当执行结果阻塞可以返回默认值，且不形象其他的线程执行结果
-
-```java
-/**
- * 异步future工具类封装
- *
- * @author: ChickenWing
- * @date: 2023/1/15
- */
-public class CompletableFutureUtils {
-
-    /**
-     * 获取future返回结果
-     */
-    public static <T> T getResult(Future<T> future, long timeout, TimeUnit timeUnit, T defaultValue, Logger logger) {
-        //超时返回默认结果
-        try {
-            return future.get(timeout, timeUnit);
-        } catch (Exception e) {
-            logger.error("CompletableFutureUtils.getResult.error:{},defaultValue:{}", e.getMessage(), e);
-            logger.error("CompletableFutureUtils.getResult.error.returnDefaultValue:{}", defaultValue);
-            return defaultValue;
-        }
-    }
-
-}
-
-```
-
-测试类：
-
-```java
- @Test
-    public void testFuture() {
-        List<FutureTask<String>> futureTaskList = new LinkedList<>();
-        FutureTask futureTask1 = new FutureTask<String>(() -> {
-            return "鸡翅";
-        });
-        FutureTask futureTask2 = new FutureTask<String>(() -> {
-            Thread.sleep(2000);
-            return "经典";
-        });
-        futureTaskList.add(futureTask1);
-        futureTaskList.add(futureTask2);
-        mailThreadPool.submit(futureTask1);
-        mailThreadPool.submit(futureTask2);
-
-        for (int i = 0; i < futureTaskList.size(); i++) {
-            String name = CompletableFutureUtils.getResult(futureTaskList.get(i),
-                    1, TimeUnit.SECONDS, "经典鸡翅", log);
-            log.info("MailThreadPoolTest.name:{}",name);
-        }
-
-    }
 ```
 
 ## Event事件驱动
@@ -2044,3 +1907,354 @@ public class PersonEventListener {
 总结：实现解耦，类似mq，如果需要类似功能且没必要去增加一个中间件的负担，可以使用事件驱动方式去实现推送监听的方式
 
 ## 手写 链路追踪
+
+梳理原来的日志打印逻辑：
+
+```xml
+ <property name="LOG_PATTERN" value="%date{HH:mm:ss.SSS}  [%thread] %-5level %logger{36} - %msg%n" />
+<!--打印时间，，线程，信息-->
+
+```
+
+所有日志全部混在一起，没有区分度所以引入%X{PFTID}profiletrilId 进行链路追踪
+
+```java
+/**
+traceId 常量
+*/
+public class TraceIdConstant {
+
+    public static final String TRACE_ID = "PFTID";
+}
+```
+
+设置traceId上下文
+
+```java
+public class TraceIdContext {
+//ThreadLocal无法在线程中传递可以使用InheritableThreadLocal
+    public static final ThreadLocal<String> CURRENT_TRACE_ID = new InheritableThreadLocal<>();
+
+    public static String generateTraceId() {
+        return UUID.randomUUID().toString();
+    }
+
+    public static String getTraceId() {
+        return MDC.get(TraceIdConstant.TRACE_ID);
+    }
+
+    public static void setTraceId(String traceId) {
+        MDC.put(TraceIdConstant.TRACE_ID, traceId);
+    }
+
+    public static void clearTraceId() {
+        CURRENT_TRACE_ID.set(null);
+        CURRENT_TRACE_ID.remove();
+    }
+
+}
+```
+
+构建traceFilter追踪过滤器
+
+```java
+@Component
+@Slf4j
+public class TraceIdFilter implements Filter {
+
+    @Override
+    public void doFilter(ServletRequest req, ServletResponse resp, FilterChain filterChain)
+            throws IOException, ServletException {
+        HttpServletRequest request = (HttpServletRequest) req;
+        String traceId = request.getHeader(TraceIdConstant.TRACE_ID);
+        if (StringUtils.isBlank(traceId)) {
+            traceId = TraceIdContext.generateTraceId();
+        }
+        TraceIdContext.setTraceId(traceId);
+        filterChain.doFilter(request, resp);
+        TraceIdContext.clearTraceId();
+    }
+
+}
+```
+
+书写配置类，设置自定义过滤器
+
+```java
+@Configuration
+public class FilterConfig {
+
+    @Resource
+    private TraceIdFilter traceIdFilter;
+
+    @Bean
+    public FilterRegistrationBean registerTraceFilter() {
+        FilterRegistrationBean registration = new FilterRegistrationBean();
+        registration.setFilter(traceIdFilter);
+        registration.addUrlPatterns("/*");
+        registration.setName("traceIdFilter");
+        registration.setOrder(1);
+        return registration;
+    }
+
+}
+```
+
+## 动态配置读取
+
+动态更改配置文件，无需重启立刻生效
+
+```java
+public class PropertiesUtils{
+    Map<String, Properties> propertiesMap = new HashMap<>();
+    Map<String, Long> modifyTimeMap = new HashMap<>();
+	private String configPath = "";
+    
+    private PropertiesUtils(){}
+    
+    public void setConfigPath(String configPath){
+        this.configPath = configPath;
+    }
+    
+    public static class SinglerHolder{
+        private static PropertiesUtils instance = new PropertiesUtils();
+    }
+    public static PropertiesUtils getInstance(){
+        return instance;
+    }
+}
+```
+
+
+
+
+
+# 多线程
+
+## 自定义线程池
+
+场景：由于业务线的线程池很多，每次都需要一个threadpool。所以需要对特定的线程池定制化
+
+```java
+ @Configuration
+public class ThreadPollConfig{
+    @Bean(name="mailThreadPool")
+    public ThreadExectorPool getMailThreadPool(){
+        //如果不传入线程工厂，底层就会使用默认的线程工厂
+        return new ThreadExectorPool(20, 50, 10,
+                                     TimeUnit.SECONDS, new LinkedBlockLingQueue<>(), 
+                                     new ThreadPoolExecutor.CallerRunsPolicy())
+    }
+}
+```
+
+测试使用自定义线程
+
+```java
+@Resource(name= "mailThreadPool")
+private ThreadExectorPool mailThreadPool;
+@Test
+void test(){
+       for (int i = 0; i < 10; i++) {
+            mailThreadPool.submit(new Runnable() {
+                @Override
+                public void run() {
+                    log.info("当前时间:" + System.currentTimeMillis());
+                }
+            });
+        }
+   
+}
+```
+
+问题：打印日志无法辨识是哪一个线程池所产生的，没有辨识度。所以需要引入自定义线程工厂
+
+### 自定义线程工厂
+
+```java
+public class MailThreadFactory implement ThreadFactiory(){
+
+    //多线程环境保证变量的原子性，使用AtomicInteger
+    private final AtomicInteger poolNumber = new AtomicInteger(1);
+
+    private final ThreadGroup threadGroup;
+
+    private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+    public final String namePrefix;
+
+    CustomNameThreadFactory(String name) {
+        SecurityManager s = System.getSecurityManager();
+        threadGroup = (s != null) ? s.getThreadGroup() :
+                Thread.currentThread().getThreadGroup();
+        if (null == name || "".equals(name.trim())) {
+            name = "pool";
+        }
+        //自定义逻辑，拼接线程name
+        namePrefix = name + "-" +
+                poolNumber.getAndIncrement() +
+                "-thread-";
+    }
+
+    @Override
+    public Thread newThread(Runnable r) {
+        Thread t = new Thread(threadGroup, r,
+                namePrefix + threadNumber.getAndIncrement(),
+                0);
+        //判断是否守护线程
+        if (t.isDaemon())
+            t.setDaemon(false);
+        //优先级	
+        if (t.getPriority() != Thread.NORM_PRIORITY)
+            t.setPriority(Thread.NORM_PRIORITY);
+        return t;
+    }
+
+}
+```
+
+## 异步线程池封装
+
+目的： 异步执行task的时候，我可以进行异步执行，当执行结果阻塞可以返回默认值，且不形象其他的线程执行结果
+
+```java
+/**
+ * 异步future工具类封装
+ *
+ * @author: ChickenWing
+ * @date: 2023/1/15
+ */
+public class CompletableFutureUtils {
+
+    /**
+     * 获取future返回结果
+     */
+    public static <T> T getResult(Future<T> future, long timeout, TimeUnit timeUnit, T defaultValue, Logger logger) {
+        //超时返回默认结果
+        try {
+            return future.get(timeout, timeUnit);
+        } catch (Exception e) {
+            logger.error("CompletableFutureUtils.getResult.error:{},defaultValue:{}", e.getMessage(), e);
+            logger.error("CompletableFutureUtils.getResult.error.returnDefaultValue:{}", defaultValue);
+            return defaultValue;
+        }
+    }
+
+}
+
+```
+
+测试类：
+
+```java
+ @Test
+    public void testFuture() {
+        List<FutureTask<String>> futureTaskList = new LinkedList<>();
+        FutureTask futureTask1 = new FutureTask<String>(() -> {
+            return "鸡翅";
+        });
+        FutureTask futureTask2 = new FutureTask<String>(() -> {
+            Thread.sleep(2000);
+            return "经典";
+        });
+        futureTaskList.add(futureTask1);
+        futureTaskList.add(futureTask2);
+        mailThreadPool.submit(futureTask1);
+        mailThreadPool.submit(futureTask2);
+
+        for (int i = 0; i < futureTaskList.size(); i++) {
+            String name = CompletableFutureUtils.getResult(futureTaskList.get(i),
+                    1, TimeUnit.SECONDS, "经典鸡翅", log);
+            log.info("MailThreadPoolTest.name:{}",name);
+        }
+
+    }
+```
+
+## 线程池两种关闭方式 
+
+通过executer.shutdown（）方法进行关闭，isShutDown（）方法可以观看线程池是否关闭
+
+```java
+@SpringBootTest(classes = DemoApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@RunWith(SpringRunner.class)
+@Slf4j
+public class ThreadPoolShutDownTest {
+
+    @Test
+    public void testShutDown() throws Exception {
+        ExecutorService executorService = Executors.newFixedThreadPool(10);
+        for (int i = 0; i < 1000; i++) {
+            executorService.execute(new TaskShutDownPool());
+        }
+        Thread.sleep(1000);
+
+        log.info("ThreadPoolShutDownTest.testShutDown.status:{}", executorService.isShutdown() + ",调用 shutdown() 方法之前");
+        executorService.shutdown();
+        log.info("ThreadPoolShutDownTest.testShutDown.status:{}", executorService.isShutdown() + ",调用 shutdown() 方法之后");
+        Thread.sleep(500);
+        log.info("ThreadPoolShutDownTest.testShutDown");
+        executorService.execute(new TaskShutDownPool());
+    }
+
+
+    class TaskShutDownPool implements Runnable {
+        @Override
+        public void run() {
+            try {
+                Thread.sleep(500);
+                log.info(Thread.currentThread().getName());
+            } catch (InterruptedException e) {
+                log.info("TaskShutDownPool.interrupted:{}", e.getMessage(), e);
+            }
+        }
+    }
+
+}
+
+```
+
+运行结果：
+
+![image-20230922142001991](ape-frame.assets/image-20230922142001991.png)
+
+**结论：**shutdown方法不会让线程池立刻关闭，而是将正在执行的任务和等待执行的任务全部执行完，然后在进行关闭
+
+### isShutdown和isTerminated方法的区别
+
+isShutdown()方法判断是否关闭，而isTerminated()方法判断线程池整体的任务完全执行结束
+
+### shutdown()和shutdownNow()方法的区别
+
+shutdown()方法终止线程池继续在添加新的任务，当所有等待的以及正在执行的任务完成后关闭线程池，而shutdownNow()方法是立刻关闭线程池，无论是否正在执行任务，都会抛出InterruptException异常
+
+## 合理的关闭线程池
+
+封装关闭线程池的工具类
+
+```java
+public class ThreadShutDownUtil{
+    private ThreadShutDownUtil();
+    
+    public static void shutdownPool(ExecutorService pool, int shutDownTimeOut, int shutDownNowtimOut, TimeUnit timeunit){
+        pool.shutdown();
+        try{
+            if(!pool.awitTermination(10L, timeUnit)){
+                pool.shutdownNow();
+                if(!pool.awitTermination(10L, timeUnit)){
+                    log.error("ThreadPoolUtils.shutDownPool.error");
+                }
+            }catch(InterrupterException e){
+                log.error("ThreadPoolUtils.shutDownPool.interrupt.error:{}", e.getMessage(), e);
+                pool.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+}
+```
+
+
+
+
+

@@ -30,6 +30,7 @@ public class ThreadPoolShutDownTest {
             executorService.execute(new TaskShutDownPool());
         }
         Thread.sleep(1000);
+
         log.info("ThreadPoolShutDownTest.testShutDown.status:{}", executorService.isShutdown() + ",调用 shutdown() 方法之前");
         executorService.shutdown();
         log.info("ThreadPoolShutDownTest.testShutDown.status:{}", executorService.isShutdown() + ",调用 shutdown() 方法之后");
