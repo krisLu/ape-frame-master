@@ -56,7 +56,7 @@ public class RedisUtil {
     }
 
     /**
-     * 是否存在key
+     * 是否存在keys
      */
     public boolean exist(String key) {
         return redisTemplate.hasKey(key);
