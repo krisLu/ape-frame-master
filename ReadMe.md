@@ -90,7 +90,7 @@ demo里提供了大量的实例，教大家如何直接使用这个项目框架�
 * 线上、预发、开发、测试环境的隔离
 * springboot-maven插件打包部署
 * httpclient的优化
-* 集成springboottest
+* 集成springbootTest
 * 服务预热
 * 分布式任务调度xxljob集成
 
