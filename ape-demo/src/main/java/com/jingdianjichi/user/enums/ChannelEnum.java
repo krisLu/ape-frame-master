@@ -54,7 +54,7 @@ public enum ChannelEnum {
     }
 
     /**
-     * 根据code值获取desc
+     * 根据code值获取desc1
      */
     public static String getValueByCode(int code) {
         ChannelEnum[] values = ChannelEnum.values();
