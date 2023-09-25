@@ -1,16 +1,4 @@
-<h1 align="center" style="margin: 30px 0 30px; font-weight: bold;">Ape Frame</h1>
-<h4 align="center">基于SpringBoot开发的轻量级框架</h4>
-<p align="center">
-<a href='https://gitee.com/classicChickenWings/ape-frame/stargazers'>
-<img src='https://gitee.com/classicChickenWings/ape-frame/badge/star.svg?theme=dark' alt='star'>
-</a>
-<a href="https://gitee.com/classicChickenWings/ape-frame">
-<img src="https://img.shields.io/badge/version-v1.0-brightgreen.svg">
-</a>
-<a href="https://gitee.com/classicChickenWings/ape-frame">
-<img src="https://img.shields.io/badge/微信-jingdianjichi-brightgreen.svg">
-</a>
-</p>
+
 
 ## ✨项目简介
 ape-frame，ape是“猿”的意思，正好符合我们程序猿的称号！我希望未来这个框架是专属于我们程序猿的首选开发框架。
